@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="csrf-token" content="{{ csrf_token }}">
+  <title>Request Review — {{ req.id }}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static',filename='request-review.css',v='20261004final') }}">
+  <link rel="stylesheet" href="{{ url_for('static',filename='nfh-loading.css',v='20261004final') }}">
+</head>
+<body>
+{% set back_url = url_for('homeowner') if role=='Homeowner' else (url_for('admin') if role=='Admin' else url_for('officer')) %}
+<header class="review-topbar">
+  <div class="review-brand"><img src="{{ url_for('static',filename='logo.png') }}" alt="NFH-HOA logo"><div><strong>NFH-HOA Request Review</strong><span>{{ role }} Portal</span></div></div>
+  <a class="review-back" href="{{ back_url }}" data-loading-text="Returning to portal…">← Back to Portal</a>
+</header>
+{% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-list">{% for category,msg in messages %}<div class="flash {{ category }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+<main class="review-shell">
+  <section class="review-hero">
+    <div><span class="review-eyebrow">Request {{ req.id }}</span><h1>{{ req.request_type }}</h1><p>{{ req.homeowner }}{% if req.homeowner_public_id and role != 'Treasurer' %} · {{ req.homeowner_public_id }}{% endif %}</p></div>
+    <div class="hero-badges"><span class="hero-badge">{{ req.status }}</span><span class="hero-badge">{{ req.payment_status }}</span><span class="hero-badge">₱{{ '%.2f'|format(req.fee|float) }}</span></div>
+  </section>
+
+  <div class="review-grid">
+    <div class="review-column">
+      <section class="review-card"><h2>Request Information</h2><p class="card-sub">Core transaction information and current workflow state.</p>
+        <div class="info-grid">
+          <div class="info-item"><span>Request ID</span><strong>{{ req.id }}</strong></div><div class="info-item"><span>Service Type</span><strong>{{ req.request_type }}</strong></div>
+          <div class="info-item"><span>Category</span><strong>{{ req.category or 'Document Request' }}</strong></div><div class="info-item"><span>Submitted</span><strong>{{ req.date_submitted }}</strong></div>
+          <div class="info-item"><span>Assigned Reviewer</span><strong>{{ req.assigned_officer or ((service or {}).get('initial_reviewer') if service else '—') or '—' }}</strong></div><div class="info-item"><span>Last Updated</span><strong>{{ req.last_updated }}</strong></div>
+        </div>
+        <div class="status-line" style="margin-top:12px"><span class="pill">{{ req.status }}</span><span class="pill {% if req.payment_status=='Unpaid' %}warn{% endif %}">{{ req.payment_status }}</span>{% if active_edit %}<span class="pill warn">Temporary Edit Access Active</span>{% endif %}</div>
+        {% if active_edit %}<div class="alert-box warn"><strong>Temporary edit deadline:</strong> {{ req.edit_access_expires_at }}<br>{{ req.edit_access_reason or 'Correction requested through the request conversation.' }}<br><strong>Workflow temporarily paused:</strong> Initial/Executive review actions are suspended until the homeowner submits the revised information or the edit window expires.</div>{% endif %}
+      </section>
+
+      <section class="review-card"><h2>Homeowner Information</h2><p class="card-sub">Resident information associated with this request.</p>
+        <div class="info-grid"><div class="info-item"><span>Name</span><strong>{{ req.homeowner }}</strong></div>{% if role != 'Treasurer' %}<div class="info-item"><span>Homeowner ID</span><strong>{{ req.homeowner_public_id or '—' }}</strong></div>{% endif %}<div class="info-item"><span>Property</span><strong>Block {{ req.block or '—' }}, Lot {{ req.lot or '—' }}</strong></div><div class="info-item"><span>Mobile</span><strong>{{ req.mobile or '—' }}</strong></div><div class="info-item" style="grid-column:1/-1"><span>Address</span><strong>{{ req.address_line or '—' }}</strong></div></div>
+      </section>
+
+      <section class="review-card"><h2>Requirements / Submitted Details</h2><p class="card-sub">Information submitted for the selected service.</p>
+        {% if details %}<table class="details-table">{% for key,value in details.items() %}<tr><td>{{ key|replace('_',' ')|replace('purposeDetails','Purpose Details')|title }}</td><td>{% if value is mapping or (value is iterable and value is not string) %}<pre style="white-space:pre-wrap;margin:0;font:inherit">{{ value|tojson(indent=2) }}</pre>{% else %}{{ value or '—' }}{% endif %}</td></tr>{% endfor %}</table>{% else %}<div class="empty">No additional request details were stored.</div>{% endif %}
+        {% if template %}<div class="action-row" style="margin-top:13px"><a class="btn btn-secondary" href="{{ url_for('request_document_pdf',req_id=req.id) }}" target="_blank" rel="noopener" data-loading-text="Preparing official document…">Preview Official Document</a></div>{% endif %}
+      </section>
+
+      <section class="review-card"><h2>Request History</h2><p class="card-sub">Chronological actions retained for traceability.</p><div class="history">
+        {% for h in history %}<div class="history-row"><span class="history-dot"></span><div><strong>{{ h.action }}{% if h.new_status %} · {{ h.new_status }}{% endif %}</strong><p>{{ h.remarks or '' }}{% if h.actor_name %}<br>By {{ h.actor_name }}{% if h.actor_role %} ({{ h.actor_role }}){% endif %}{% endif %}</p></div><time>{{ h.created_at }}</time></div>{% else %}<div class="empty">No request history is available.</div>{% endfor %}
+      </div></section>
+
+      <section class="review-card" id="conversation"><h2>Concern / Conversation</h2><p class="card-sub">Request-specific communication stays attached to this Request ID.</p>
+        <div class="conversation">{% for c in concerns %}<article class="concern"><div class="concern-head"><strong>{{ c.subject or 'Request Concern' }}</strong><span>{{ c.status }} · {{ c.created_at }}</span></div><p>{{ c.concern_text }}</p>{% if c.response_text %}<div class="response"><strong>Response{% if c.responded_by %} — {{ c.responded_by }}{% endif %}</strong><p>{{ c.response_text }}</p></div>{% endif %}
+          {% if role in ['Secretary','Treasurer','Admin'] and c.status != 'Resolved' and (role=='Admin' or c.assigned_role==role) %}<form action="{{ url_for('respond_request_concern',concern_id=c.id) }}" method="POST" data-loading-text="Saving response…"><div class="form-field" style="margin-top:10px"><label>Official Response</label><textarea name="response" rows="3" required placeholder="Write a clear response for the homeowner..."></textarea></div><button class="btn btn-primary" type="submit">Send Response</button></form>{% endif %}
+          {% if role=='Homeowner' and c.status=='Responded' %}<button class="btn btn-secondary" type="button" onclick="resolveConcern({{ c.id }})">Mark Resolved</button>{% endif %}
+        </article>{% else %}<div class="empty">No concerns have been submitted for this request.</div>{% endfor %}</div>
+        {% if role=='Homeowner' and req.status not in ['Cancelled','Rejected','Issued / Completed'] %}<form id="reviewConcernForm" style="margin-top:15px"><div class="form-field"><label>Subject</label><input id="reviewConcernSubject" maxlength="150" placeholder="Example: Request information correction"></div><div class="form-field"><label>Concern</label><textarea id="reviewConcernMessage" rows="4" maxlength="1500" required placeholder="Describe what needs clarification or correction."></textarea></div><button class="btn btn-primary" type="submit">Submit Concern</button></form>{% endif %}
+      </section>
+    </div>
+
+    <aside class="review-column">
+      <section class="review-card"><h2>Monthly Dues</h2><p class="card-sub">Eligibility information maintained by the Treasurer.</p><div class="info-grid"><div class="info-item"><span>Unpaid Months</span><strong>{{ dues.unpaid_months or 0 }}</strong></div><div class="info-item"><span>Outstanding Balance</span><strong>₱{{ '%.2f'|format((dues.outstanding_balance or 0)|float) }}</strong></div></div>{% if dues.unpaid_months %}<div class="alert-box warn">Outstanding dues remain on record. Only the Treasurer can update dues settlement information.</div>{% else %}<div class="alert-box info">No outstanding monthly dues are recorded for request eligibility.</div>{% endif %}</section>
+
+      <section class="review-card"><h2>Status &amp; Payment</h2><p class="card-sub">Current processing and release information.</p><div class="info-grid"><div class="info-item"><span>Status</span><strong>{{ req.status }}</strong></div><div class="info-item"><span>Payment</span><strong>{{ req.payment_status }}</strong></div><div class="info-item"><span>Fee</span><strong>₱{{ '%.2f'|format(req.fee|float) }}</strong></div><div class="info-item"><span>System Reference</span><strong>{{ (payment_tx or {}).get('system_reference') or '—' }}</strong></div><div class="info-item"><span>Official Receipt No.</span><strong>{{ (payment_tx or {}).get('official_receipt_no') or '—' }}</strong></div><div class="info-item"><span>Released</span><strong>{% if (payment_tx or {}).get('document_released') %}Yes{% elif req.status=='Issued / Completed' %}Completed{% else %}Not yet{% endif %}</strong></div></div></section>
+
+      <section class="review-card"><h2>Officer Remarks</h2><p class="card-sub">Documented correction/review remarks.</p>{% if req.remarks %}<div class="alert-box warn">{{ req.remarks }}</div>{% else %}<div class="empty">No current Officer Remarks.</div>{% endif %}</section>
+
+      <section class="review-card"><h2>Available Actions</h2><p class="card-sub">Actions are limited by role and the current workflow stage.</p><div class="action-stack">
+        {% if role=='Homeowner' %}
+          {% if can_edit %}<div class="action-box"><h3>{% if active_edit %}Temporary Edit Access{% else %}Correction Required{% endif %}</h3><a class="btn btn-primary" href="{{ url_for('homeowner') }}?edit_request={{ req.id }}#myrequests-view" data-loading-text="Opening editable request…">Edit Request Information</a>{% if active_edit %}<p class="card-sub" style="margin-top:8px">Submit the corrected information before {{ req.edit_access_expires_at }}. The request will return to initial review.</p>{% endif %}</div>{% endif %}
+          {% if can_cancel %}<div class="action-box"><h3>Cancel Request</h3><p class="card-sub">Cancellation is available only before initial checking is completed.</p><div class="form-field"><textarea id="reviewCancelReason" rows="2" placeholder="Reason (optional)"></textarea></div><button class="btn btn-danger" type="button" onclick="cancelFromReview()">Cancel Request</button></div>{% endif %}
+        {% endif %}
+        {% if can_initial_review %}<div class="action-box"><h3>Initial Review</h3><p class="card-sub">Choose one action only. Returning For Correction requires Officer Remarks and immediately removes the request from the pending initial-review queue.</p><form id="initialReviewForm" action="{{ url_for('check_request',req_id=req.id) }}" method="POST" data-loading-text="Updating request…"><input type="hidden" name="action" id="initialReviewAction" value=""><div class="form-field"><label for="initialReviewRemarks">Officer Remarks</label><textarea id="initialReviewRemarks" name="remarks" rows="3" placeholder="Required when returning For Correction."></textarea><small id="initialReviewRemarksHelp" class="field-hint">Give the homeowner a specific correction instruction when using For Correction.</small></div><div class="form-field"><label for="initialReviewRejectReason">Rejection Reason</label><select id="initialReviewRejectReason" name="rejection_reason"><option value="">Select only when rejecting</option><option>Invalid supporting document</option><option>Request information is inconsistent</option><option>Applicant is not eligible for the requested service</option><option>Duplicate request</option><option>Incorrect property information</option><option>HOA policy restriction</option><option>Other</option></select></div><div class="form-field"><label for="initialReviewRejectDetails">Other Rejection Details</label><textarea id="initialReviewRejectDetails" name="rejection_details" rows="2" placeholder="Required only when Other is selected."></textarea></div><div class="action-row"><button class="btn btn-success" type="button" onclick="submitInitialReviewAction('check',this)">Check &amp; Forward</button><button class="btn btn-warning" type="button" onclick="submitInitialReviewAction('correction',this)">For Correction</button><button class="btn btn-danger" type="button" onclick="submitInitialReviewAction('reject',this)">Reject</button></div></form></div>{% endif %}
+        {% if can_grant_edit %}<div class="action-box"><h3>Grant Temporary Edit Access</h3><form action="{{ url_for('grant_request_edit_access',req_id=req.id) }}" method="POST" data-loading-text="Granting edit access…"><div class="form-field"><label>Edit Window</label><select name="duration_minutes">{% for mins in edit_durations %}<option value="{{ mins }}" {% if mins==60 %}selected{% endif %}>{{ mins }} minutes</option>{% endfor %}</select></div><div class="form-field"><label>Reason</label><textarea name="reason" rows="3" required>Homeowner reported an incorrect request detail through Request Concern.</textarea></div><button class="btn btn-primary" type="submit">Grant Edit Access</button></form></div>{% endif %}
+        {% if can_exec_approve %}<div class="action-box"><h3>Executive Final Approval</h3><p class="card-sub">Request rejection is handled during initial review. Executive Approvers record the final approval only.</p><form action="{{ url_for('president_action',req_id=req.id) }}" method="POST" data-loading-text="Recording approval…"><button class="btn btn-success" name="action" value="approve" type="submit">Approve Request</button></form></div>{% endif %}
+        {% if role in ['Treasurer','Admin'] and req.status in ['Ready for Payment & Release','Paid - Awaiting Release'] %}<div class="action-box"><h3>Payment / Release</h3><a class="btn btn-primary" href="{{ url_for('officer') if role!='Admin' else url_for('admin') }}#payments" data-loading-text="Opening payment workflow…">Open Payment &amp; Release Queue</a></div>{% endif %}
+        {% if not (can_edit or can_cancel or can_initial_review or can_grant_edit or can_exec_approve) %}<div class="empty">No direct action is available for your role at this stage. You can still review the information and conversation above.</div>{% endif %}
+      </div></section>
+    </aside>
+  </div>
+  <p class="review-footer-note">NFH-HOA Procedure-Based Document Request System · Review actions are recorded according to role and workflow.</p>
+</main>
+<script src="{{ url_for('static',filename='csrf.js',v='20261004final') }}"></script><script src="{{ url_for('static',filename='nfh-loading.js',v='20261004final') }}"></script>
+<script>
+const REVIEW_REQUEST_ID={{ req.id|tojson }};
+async function apiJson(url,options){try{NFHLoading.show('Processing…');const r=await fetch(url,options||{});const d=await r.json();if(!r.ok||d.status==='error')throw new Error(d.message||'Request failed.');return d;}finally{NFHLoading.hide();}}
+
+async function submitInitialReviewAction(action,button){
+  const form=document.getElementById('initialReviewForm');
+  if(!form || form.dataset.submitting==='true') return;
+  const remarks=document.getElementById('initialReviewRemarks');
+  const reason=document.getElementById('initialReviewRejectReason');
+  const details=document.getElementById('initialReviewRejectDetails');
+  const actionField=document.getElementById('initialReviewAction');
+  if(action==='correction' && !(remarks?.value||'').trim()){
+    remarks?.focus(); remarks?.classList.add('field-invalid');
+    alert('Officer Remarks are required before returning this request For Correction.'); return;
+  }
+  if(action==='reject' && !(reason?.value||'').trim()){
+    reason?.focus(); reason?.classList.add('field-invalid');
+    alert('Select a rejection reason before rejecting this request.'); return;
+  }
+  if(action==='reject' && reason?.value==='Other' && !(details?.value||'').trim()){
+    details?.focus(); details?.classList.add('field-invalid');
+    alert('Provide the rejection reason when Other is selected.'); return;
+  }
+  const messages={
+    check:'Check this request and forward it to the next configured workflow stage?',
+    correction:'Return this request For Correction? The homeowner will receive the Officer Remarks and may edit the same Request ID.',
+    reject:'Reject this request during initial review? This action will end the request workflow.'
+  };
+  if(!confirm(messages[action]||'Continue with this action?')) return;
+  actionField.value=action;
+  form.dataset.submitting='true';
+  form.querySelectorAll('button').forEach(b=>b.disabled=true);
+  if(button) button.textContent=action==='correction'?'Returning For Correction…':action==='reject'?'Rejecting Request…':'Forwarding Request…';
+  NFHLoading?.show(action==='correction'?'Returning request For Correction…':'Updating request…');
+  form.requestSubmit();
+}
+async function cancelFromReview(){if(!confirm('Cancel this request before initial review is completed?'))return;const reason=document.getElementById('reviewCancelReason')?.value||'';try{const d=await apiJson('/api/requests/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:REVIEW_REQUEST_ID,reason})});alert(d.message);location.href={{ url_for('homeowner')|tojson }}+'#myrequests-view';}catch(e){alert(e.message);}}
+document.getElementById('reviewConcernForm')?.addEventListener('submit',async e=>{e.preventDefault();const subject=document.getElementById('reviewConcernSubject').value.trim()||'Request Concern';const message=document.getElementById('reviewConcernMessage').value.trim();if(message.length<5){alert('Please enter a clear concern.');return;}try{const d=await apiJson('/api/requests/concern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:REVIEW_REQUEST_ID,subject,message})});alert(d.message);location.reload();}catch(err){alert(err.message);}});
+async function resolveConcern(id){try{const d=await apiJson('/api/requests/concerns/'+id+'/resolve',{method:'POST'});alert(d.message);location.reload();}catch(e){alert(e.message);}}
+</script>
+</body></html>
